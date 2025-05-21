@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const axios = require('axios');
+const express = require('express'); // Webserver hinzufügen
 
 const client = new Client({
   intents: [
@@ -21,7 +22,6 @@ const commands = [
     .setDescription('Bannt einen Roblox-Spieler permanent.')
     .addStringOption(option =>
       option.setName('user').setDescription('Roblox-Benutzername').setRequired(true)),
-
   new SlashCommandBuilder()
     .setName('tempban')
     .setDescription('Bannt einen Roblox-Spieler temporär.')
@@ -29,25 +29,21 @@ const commands = [
       option.setName('user').setDescription('Roblox-Benutzername').setRequired(true))
     .addStringOption(option =>
       option.setName('dauer').setDescription('Dauer des Banns (z.B. 1d, 2h)').setRequired(true)),
-
   new SlashCommandBuilder()
     .setName('unban')
     .setDescription('Entbannt einen Roblox-Spieler.')
     .addStringOption(option =>
       option.setName('user').setDescription('Roblox-Benutzername').setRequired(true)),
-
   new SlashCommandBuilder()
     .setName('kick')
     .setDescription('Kickt einen Roblox-Spieler aus dem Spiel.')
     .addStringOption(option =>
       option.setName('user').setDescription('Roblox-Benutzername').setRequired(true)),
-
   new SlashCommandBuilder()
     .setName('add')
     .setDescription('Fügt einen Benutzer zur Berechtigungsliste hinzu.')
     .addUserOption(option =>
       option.setName('user').setDescription('Discord-Nutzer').setRequired(true)),
-
   new SlashCommandBuilder()
     .setName('remove')
     .setDescription('Entfernt einen Benutzer aus der Berechtigungsliste.')
@@ -90,7 +86,8 @@ async function sendAction(user, action, duration = null) {
 
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.channel.type === 1) return interaction.reply({ content: '❌ Diese Commands können nicht in DMs verwendet werden.', ephemeral: true });
+  if (interaction.channel.type === 1)
+    return interaction.reply({ content: '❌ Diese Commands können nicht in DMs verwendet werden.', ephemeral: true });
 
   const { commandName, user } = interaction;
   const username = interaction.options.getString('user');
@@ -98,7 +95,6 @@ client.on('interactionCreate', async interaction => {
   const targetUser = interaction.options.getUser('user');
   const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
 
-  // Schutz vor nicht-berechtigten Usern
   if (!OWNER_IDS.includes(user.id) && !allowedUsers.has(user.id)) {
     return interaction.reply({ content: '❌ Zugriff verweigert. Du bist nicht berechtigt, diesen Command zu nutzen.', ephemeral: true });
   }
@@ -164,3 +160,17 @@ client.on('interactionCreate', async interaction => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
+// =====================
+// Webserver für Render
+// =====================
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('✅ Der Discord-Bot läuft.');
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🌐 Webserver läuft auf Port ${PORT}`);
+});

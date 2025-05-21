@@ -11,9 +11,9 @@ const client = new Client({
   ],
 });
 
-const LOG_CHANNEL_ID = '1373777502073389219';
-const GUILD_ID = '1361770059575591143';
-const OWNER_IDS = ['1079510826651758713', '1098314958900568094'];
+const LOG_CHANNEL_ID = '1373777502073389219'; // Ersetze hier mit deiner Log-Channel-ID
+const GUILD_ID = '1361770059575591143';       // Ersetze hier mit deiner Guild-ID
+const OWNER_IDS = ['1079510826651758713', '1098314958900568094']; // Ersetze hier mit deinen Admin-IDs
 let allowedUsers = new Set(OWNER_IDS);
 
 const commands = [
@@ -95,7 +95,7 @@ async function sendAction(user, action, duration = null) {
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  if (interaction.channel.type === 1) // DM-Check
+  if (interaction.channel.type === 1) // DM check
     return interaction.reply({ content: '❌ Diese Commands können nicht in DMs verwendet werden.', ephemeral: true });
 
   const { commandName, user } = interaction;
@@ -157,7 +157,6 @@ client.on('interactionCreate', async interaction => {
           return;
         }
 
-        // Hole Userinfos von allowedUsers
         const guild = client.guilds.cache.get(GUILD_ID);
         if (!guild) {
           await interaction.editReply('❌ Konnte den Server nicht finden.');
@@ -174,7 +173,6 @@ client.on('interactionCreate', async interaction => {
           }
         }
 
-        // Text zu lang? Dann kürzen
         if (whitelistText.length > 4000) {
           whitelistText = whitelistText.slice(0, 3997) + '...';
         }
@@ -190,7 +188,6 @@ client.on('interactionCreate', async interaction => {
         return;
       }
     } else {
-      // Ban/Tempban/Unban/Kick mit Roblox Username (StringOption)
       const username = interaction.options.getString('user');
       const duration = interaction.options.getString('dauer');
 
@@ -243,9 +240,7 @@ client.on('interactionCreate', async interaction => {
 
 client.login(process.env.DISCORD_TOKEN);
 
-// =====================
-// Webserver für Render
-// =====================
+// Webserver
 const app = express();
 const PORT = process.env.PORT || 3000;
 

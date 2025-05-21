@@ -11,9 +11,16 @@ const client = new Client({
   ],
 });
 
-const LOG_CHANNEL_ID = '1373777502073389219'; // Deine Log-Channel-ID
-const OWNER_IDS = ['1079510826651758713', '1098314958900568094']; // Deine Owner-IDs
-let allowedUsers = new Set(OWNER_IDS);
+const LOG_CHANNEL_ID = '1373777502073389219';
+const GUILD_ID = '1361770059575591143';
+const OWNER_IDS = ['1079510826651758713', '1098314958900568094'];
+let allowedUsers = new Set(OWNER_IDS); // Owner automatisch in Whitelist
+
+// Beispielhafte Datenstruktur für gebannte Roblox-User
+const bannedUsers = new Map([
+  ['banneduser123', 'Permanent gebannt'],
+  ['tempbanneduser', 'Temporär gebannt bis 2025-06-01'],
+]);
 
 const commands = [
   new SlashCommandBuilder()
@@ -40,216 +47,257 @@ const commands = [
       option.setName('user').setDescription('Roblox-Benutzername').setRequired(true)),
   new SlashCommandBuilder()
     .setName('add')
-    .setDescription('Fügt einen Benutzer zur Berechtigungsliste hinzu.')
+    .setDescription('Fügt einen Benutzer zur Whitelist hinzu.')
     .addUserOption(option =>
       option.setName('user').setDescription('Discord-Nutzer').setRequired(true)),
   new SlashCommandBuilder()
     .setName('remove')
-    .setDescription('Entfernt einen Benutzer aus der Berechtigungsliste.')
+    .setDescription('Entfernt einen Benutzer aus der Whitelist.')
     .addUserOption(option =>
       option.setName('user').setDescription('Discord-Nutzer').setRequired(true)),
   new SlashCommandBuilder()
     .setName('view')
-    .setDescription('Zeigt verschiedene Listen an.')
-    .addSubcommand(sub =>
-      sub
-        .setName('whitelist')
-        .setDescription('Zeigt alle Benutzer in der Whitelist an.')
-    ),
+    .setDescription('Zeigt alle Benutzer in der Whitelist an.'),
+  new SlashCommandBuilder()
+    .setName('viewroblox')
+    .setDescription('Zeigt Informationen zu einem Roblox-Benutzer an.')
+    .addStringOption(option =>
+      option.setName('robloxuser').setDescription('Roblox-Benutzername').setRequired(true)),
 ].map(command => command.toJSON());
 
 client.once('ready', async () => {
   console.log(`✅ Bot ist online als ${client.user.tag}`);
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
-    console.log('🔄 Registriere globale Slash-Commands...');
+    console.log('🔄 Registriere Slash-Commands...');
     await rest.put(
-      Routes.applicationCommands(process.env.CLIENT_ID),
+      Routes.applicationGuildCommands(process.env.CLIENT_ID, GUILD_ID),
       { body: commands }
     );
-    console.log('✅ Globale Slash-Commands registriert. (Achtung: bis zu 1 Stunde Verzögerung)');
+    console.log('✅ Slash-Commands registriert.');
   } catch (error) {
     console.error('❌ Fehler beim Registrieren:', error);
   }
 });
 
-async function getRobloxUserInfo(username) {
+// Roblox API - User ID holen
+async function getRobloxUserId(username) {
   try {
     const res = await axios.post('https://users.roblox.com/v1/usernames/users', {
       usernames: [username],
       excludeBannedUsers: false
     });
-    return res.data.data[0];
+    return res.data.data.length ? res.data.data[0].id : null;
   } catch {
     return null;
   }
 }
 
+// Roblox Thumbnail API für Avatarbild
+async function getRobloxAvatarUrl(userId) {
+  try {
+    const res = await axios.get('https://thumbnails.roblox.com/v1/users/avatar', {
+      params: {
+        userIds: userId,
+        size: '150x150',
+        format: 'Png',
+        isCircular: true
+      }
+    });
+    return res.data.data.length ? res.data.data[0].imageUrl : null;
+  } catch {
+    return null;
+  }
+}
+
+// Aktion an externe API senden (dummy, anpassen!)
 async function sendAction(user, action, duration = null) {
-  const payload = { user, action };
-  if (duration) payload.duration = duration;
-  await axios.post(process.env.API_URL, payload);
+  // Beispiel: await axios.post(process.env.API_URL, { user, action, duration });
+  return; // Dummy
 }
 
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
-
-  if (interaction.channel.type === 1) // DM check
+  if (interaction.channel.type === 1) // DMs
     return interaction.reply({ content: '❌ Diese Commands können nicht in DMs verwendet werden.', ephemeral: true });
 
   const { commandName, user } = interaction;
-  const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
 
+  // Berechtigungen prüfen
   if (!OWNER_IDS.includes(user.id) && !allowedUsers.has(user.id)) {
     return interaction.reply({ content: '❌ Zugriff verweigert. Du bist nicht berechtigt, diesen Command zu nutzen.', ephemeral: true });
   }
-
   if (['add', 'remove'].includes(commandName) && !OWNER_IDS.includes(user.id)) {
     return interaction.reply({ content: '❌ Nur System-Administratoren dürfen diesen Command verwenden.', ephemeral: true });
   }
 
+  const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
+
   try {
-    await interaction.deferReply({ ephemeral: commandName !== 'view' }); // Nur /view nicht ephemeral
+    await interaction.deferReply({ ephemeral: false }); // Jeder sieht die Antwort
 
-    if (commandName === 'add' || commandName === 'remove') {
+    if (commandName === 'add') {
       const targetUser = interaction.options.getUser('user');
-      if (!targetUser) return interaction.editReply('❌ Bitte gib einen gültigen Discord-Nutzer an.');
+      if (!targetUser) return interaction.editReply('⚠️ Kein Benutzer angegeben.');
 
-      if (commandName === 'add') {
-        allowedUsers.add(targetUser.id);
-        await interaction.editReply(`✅ ${targetUser.tag} wurde zur Whitelist hinzugefügt.`);
-
-        if (logChannel) {
-          logChannel.send({
-            embeds: [
-              new EmbedBuilder()
-                .setTitle('Whitelist Update')
-                .setDescription(`✅ Benutzer **${targetUser.tag}** (<@${targetUser.id}>) wurde zur Whitelist hinzugefügt.`)
-                .setColor(0x00FF00)
-                .setTimestamp()
-            ]
-          });
-        }
-        return;
-      } else if (commandName === 'remove') {
-        allowedUsers.delete(targetUser.id);
-        await interaction.editReply(`✅ ${targetUser.tag} wurde von der Whitelist entfernt.`);
-
-        if (logChannel) {
-          logChannel.send({
-            embeds: [
-              new EmbedBuilder()
-                .setTitle('Whitelist Update')
-                .setDescription(`❌ Benutzer **${targetUser.tag}** (<@${targetUser.id}>) wurde von der Whitelist entfernt.`)
-                .setColor(0xFF0000)
-                .setTimestamp()
-            ]
-          });
-        }
-        return;
+      if (allowedUsers.has(targetUser.id)) {
+        return interaction.editReply(`❗️ ${targetUser.tag} ist bereits in der Whitelist.`);
       }
-    } else if (commandName === 'view') {
-      const subcommand = interaction.options.getSubcommand();
-      if (subcommand === 'whitelist') {
-        const guilds = client.guilds.cache;
-        if (guilds.size === 0) {
-          await interaction.editReply('❌ Der Bot ist in keinem Server.');
-          return;
-        }
 
-        const guild = guilds.first();
+      allowedUsers.add(targetUser.id);
 
-        if (!guild) {
-          await interaction.editReply('❌ Konnte den Server nicht finden.');
-          return;
-        }
+      const embed = new EmbedBuilder()
+        .setTitle('➕ Zur Whitelist hinzugefügt')
+        .setDescription(`👤 [${targetUser.tag}](https://discord.com/users/${targetUser.id}) wurde zur Whitelist hinzugefügt.`)
+        .setColor(0x00ff00)
+        .setTimestamp();
 
-        if (allowedUsers.size === 0) {
-          await interaction.editReply('⚠️ Die Whitelist ist leer.');
-          return;
-        }
+      if (logChannel) await logChannel.send({ embeds: [embed] });
+      return interaction.editReply({ embeds: [embed] });
+    }
 
-        const embed = new EmbedBuilder()
-          .setTitle('Whitelist Übersicht')
-          .setColor(0x00AAFF)
-          .setTimestamp();
+    if (commandName === 'remove') {
+      const targetUser = interaction.options.getUser('user');
+      if (!targetUser) return interaction.editReply('⚠️ Kein Benutzer angegeben.');
 
-        for (const userId of allowedUsers) {
-          try {
-            const member = await guild.members.fetch(userId);
-            const rank = OWNER_IDS.includes(userId) ? 'Owner' : 'Moderator';
-            embed.addFields({
-              name: `${member.user.tag} (${rank})`,
-              value: `[Discord-Profil](https://discord.com/users/${userId})`,
-              inline: true,
-            });
-          } catch {
-            embed.addFields({
-              name: `Unbekannter Benutzer (${userId})`,
-              value: 'Discord-Nutzer konnte nicht gefunden werden.',
-            });
+      if (OWNER_IDS.includes(targetUser.id)) {
+        return interaction.editReply('❌ Du kannst einen Owner nicht aus der Whitelist entfernen.');
+      }
+
+      if (!allowedUsers.has(targetUser.id)) {
+        return interaction.editReply(`❗️ ${targetUser.tag} ist nicht in der Whitelist.`);
+      }
+
+      allowedUsers.delete(targetUser.id);
+
+      const embed = new EmbedBuilder()
+        .setTitle('➖ Von Whitelist entfernt')
+        .setDescription(`👤 [${targetUser.tag}](https://discord.com/users/${targetUser.id}) wurde von der Whitelist entfernt.`)
+        .setColor(0xff0000)
+        .setTimestamp();
+
+      if (logChannel) await logChannel.send({ embeds: [embed] });
+      return interaction.editReply({ embeds: [embed] });
+    }
+
+    if (commandName === 'view') {
+      const embed = new EmbedBuilder()
+        .setTitle('🔐 Whitelist-Mitglieder')
+        .setColor(0x0099ff)
+        .setTimestamp();
+
+      // Owner und Moderatoren trennen
+      const owners = [];
+      const moderators = [];
+
+      for (const id of allowedUsers) {
+        try {
+          const member = await client.users.fetch(id);
+          const profileLink = `[${member.tag}](https://discord.com/users/${member.id})`;
+
+          const line = `${profileLink} — Rang: **${OWNER_IDS.includes(id) ? 'Owner' : 'Moderator'}**`;
+
+          if (OWNER_IDS.includes(id)) {
+            owners.push(line);
+          } else {
+            moderators.push(line);
+          }
+        } catch {
+          if (OWNER_IDS.includes(id)) {
+            owners.push(`❓ <@${id}> — Owner`);
+          } else {
+            moderators.push(`❓ <@${id}> — Moderator`);
           }
         }
-
-        await interaction.editReply({ embeds: [embed], ephemeral: false });
-        return;
       }
-    } else {
+
+      let description = '';
+      if (owners.length > 0) {
+        description += '**------ Owner:**\n' + owners.join('\n') + '\n\n';
+      }
+      if (moderators.length > 0) {
+        description += '**------ Moderatoren:**\n' + moderators.join('\n');
+      }
+      if (description === '') {
+        description = 'Keine Whitelist-Mitglieder gefunden.';
+      }
+
+      embed.setDescription(description);
+      return interaction.editReply({ embeds: [embed] });
+    }
+
+    if (commandName === 'viewroblox') {
+      const robloxUserName = interaction.options.getString('robloxuser');
+      if (!robloxUserName) return interaction.editReply('⚠️ Kein Roblox-Benutzername angegeben.');
+
+      const userId = await getRobloxUserId(robloxUserName);
+      if (!userId) {
+        return interaction.editReply(`❌ Roblox-Benutzer **${robloxUserName}** wurde nicht gefunden.`);
+      }
+
+      const avatarUrl = await getRobloxAvatarUrl(userId);
+      const profileUrl = `https://www.roblox.com/users/${userId}/profile`;
+
+      const banStatus = bannedUsers.has(robloxUserName.toLowerCase())
+        ? `🚫 Status: **${bannedUsers.get(robloxUserName.toLowerCase())}**`
+        : '✅ Status: **Nicht gebannt**';
+
+      const embed = new EmbedBuilder()
+        .setTitle(`Roblox User: ${robloxUserName}`)
+        .setURL(profileUrl)
+        .setDescription(`[Profil ansehen](${profileUrl})\n\n${banStatus}`)
+        .setColor(0x00ff00)
+        .setTimestamp();
+
+      if (avatarUrl) {
+        embed.setThumbnail(avatarUrl);
+      }
+
+      return interaction.editReply({ embeds: [embed] });
+    }
+
+    // Ban, Tempban, Unban, Kick Commands
+    if (['ban', 'tempban', 'unban', 'kick'].includes(commandName)) {
       const username = interaction.options.getString('user');
+      if (!username) return interaction.editReply('⚠️ Kein Benutzername angegeben.');
+
       const duration = interaction.options.getString('dauer');
 
-      if (!username) return interaction.editReply('⚠️ Kein Roblox-Benutzername angegeben.');
-
-      const robloxUser = await getRobloxUserInfo(username);
-
-      if (!robloxUser) {
-        return interaction.editReply(`❌ Roblox-Benutzer "${username}" wurde nicht gefunden.`);
-      }
-
-      const robloxId = robloxUser.id;
-      const robloxProfile = `https://www.roblox.com/users/${robloxId}/profile`;
-      const avatar = `https://www.roblox.com/headshot-thumbnail/image?userId=${robloxId}&width=150&height=150&format=png`;
+      const robloxUserId = await getRobloxUserId(username);
+      const robloxProfile = robloxUserId ? `https://www.roblox.com/users/${robloxUserId}/profile` : 'Nicht gefunden';
+      const avatarUrl = robloxUserId ? await getRobloxAvatarUrl(robloxUserId) : null;
 
       await sendAction(username, commandName, duration);
 
-      const successMsg = `✅ **${commandName.toUpperCase()}** für **${username}** wurde ausgeführt von ${user.tag}`;
-      await interaction.editReply(successMsg);
+      const successEmbed = new EmbedBuilder()
+        .setTitle(`✅ ${commandName.toUpperCase()} ausgeführt`)
+        .setDescription(`👤 Roblox: **${username}**\n🔗 [Profil](${robloxProfile})\n🧑‍💻 Von: ${user.tag}`)
+        .setColor(0xff0000)
+        .setTimestamp();
 
-      if (logChannel) {
-        logChannel.send({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(`🛠️ Aktion: ${commandName.toUpperCase()}`)
-              .setDescription(`👤 Roblox-Name: **${username}**\n🔗 [Zum Profil](${robloxProfile})\n🧑‍💻 Ausgeführt von: ${user.tag}`)
-              .setThumbnail(avatar)
-              .setColor(0xff0000)
-              .setFooter({ text: 'Roblox-Moderation via Discord' })
-              .setTimestamp()
-          ]
-        });
+      if (avatarUrl) {
+        successEmbed.setThumbnail(avatarUrl);
       }
+
+      if (logChannel) await logChannel.send({ embeds: [successEmbed] });
+      return interaction.editReply({ embeds: [successEmbed] });
     }
+
   } catch (err) {
-    await interaction.editReply('❌ Fehler beim Ausführen der Aktion.');
-    if (logChannel) {
-      logChannel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle('⚠️ FEHLER BEI COMMAND')
-            .setDescription(`❌ Fehler: \`${err.response?.data?.error || err.message}\`\n🧑‍💻 Von: ${user.tag}`)
-            .setColor(0xff3300)
-            .setTimestamp()
-        ]
-      });
-    }
+    const errorEmbed = new EmbedBuilder()
+      .setTitle('❌ Fehler bei Ausführung')
+      .setDescription(`❌ Fehler: \`${err.message || err}\`\n🧑‍💻 Von: ${user.tag}`)
+      .setColor(0xff0000)
+      .setTimestamp();
+
+    if (logChannel) await logChannel.send({ embeds: [errorEmbed] });
+    return interaction.editReply({ embeds: [errorEmbed] });
   }
 });
 
 client.login(process.env.DISCORD_TOKEN);
 
-// =====================
-// Webserver für Render
-// =====================
+// Express Webserver für Statusseite
 const app = express();
 const PORT = process.env.PORT || 3000;
 

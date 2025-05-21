@@ -11,9 +11,9 @@ const client = new Client({
   ],
 });
 
-const LOG_CHANNEL_ID = '1373777502073389219'; // Ersetze hier mit deiner Log-Channel-ID
-const GUILD_ID = '1361770059575591143';       // Ersetze hier mit deiner Guild-ID
-const OWNER_IDS = ['1079510826651758713', '1098314958900568094']; // Ersetze hier mit deinen Admin-IDs
+const LOG_CHANNEL_ID = '1373777502073389219'; // Deine Log-Channel-ID
+const GUILD_ID = '1361770059575591143';       // Deine Guild-ID
+const OWNER_IDS = ['1079510826651758713', '1098314958900568094']; // Deine Owner-IDs
 let allowedUsers = new Set(OWNER_IDS);
 
 const commands = [
@@ -110,7 +110,7 @@ client.on('interactionCreate', async interaction => {
   }
 
   try {
-    await interaction.deferReply();
+    await interaction.deferReply({ ephemeral: commandName !== 'view' }); // Nur bei /view nicht ephemeral
 
     if (commandName === 'add' || commandName === 'remove') {
       const targetUser = interaction.options.getUser('user');
@@ -152,39 +152,44 @@ client.on('interactionCreate', async interaction => {
     } else if (commandName === 'view') {
       const subcommand = interaction.options.getSubcommand();
       if (subcommand === 'whitelist') {
-        if (allowedUsers.size === 0) {
-          await interaction.editReply('⚠️ Die Whitelist ist leer.');
-          return;
-        }
-
         const guild = client.guilds.cache.get(GUILD_ID);
         if (!guild) {
           await interaction.editReply('❌ Konnte den Server nicht finden.');
           return;
         }
 
-        let whitelistText = '';
+        // Wenn whitelist leer (nur Owner drin), immer anzeigen
+        if (allowedUsers.size === 0) {
+          await interaction.editReply('⚠️ Die Whitelist ist leer.');
+          return;
+        }
+
+        // Erstelle Embed mit allen Whitelist-Nutzern, inkl. Rank (Owner oder Moderator)
+        const embed = new EmbedBuilder()
+          .setTitle('Whitelist Übersicht')
+          .setColor(0x00AAFF)
+          .setTimestamp();
+
+        // Für jeden User in allowedUsers: 
         for (const userId of allowedUsers) {
           try {
             const member = await guild.members.fetch(userId);
-            whitelistText += `• [${member.user.tag}](https://discord.com/users/${userId})\n`;
+            const rank = OWNER_IDS.includes(userId) ? 'Owner' : 'Moderator';
+            embed.addFields({
+              name: `${member.user.tag} (${rank})`,
+              value: `[Discord-Profil](https://discord.com/users/${userId})`,
+              inline: true,
+            });
+            embed.setThumbnail(member.user.displayAvatarURL({ dynamic: true }));
           } catch {
-            whitelistText += `• <@${userId}> (User nicht gefunden)\n`;
+            embed.addFields({
+              name: `Unbekannter Benutzer (${userId})`,
+              value: 'Discord-Nutzer konnte nicht gefunden werden.',
+            });
           }
         }
 
-        if (whitelistText.length > 4000) {
-          whitelistText = whitelistText.slice(0, 3997) + '...';
-        }
-
-        const embed = new EmbedBuilder()
-          .setTitle('Whitelist Übersicht')
-          .setDescription(whitelistText)
-          .setColor(0x00AAFF)
-          .setFooter({ text: `Whitelist Größe: ${allowedUsers.size}` })
-          .setTimestamp();
-
-        await interaction.editReply({ embeds: [embed] });
+        await interaction.editReply({ embeds: [embed], ephemeral: false });
         return;
       }
     } else {
@@ -251,3 +256,4 @@ app.get('/', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🌐 Webserver läuft auf Port ${PORT}`);
 });
+

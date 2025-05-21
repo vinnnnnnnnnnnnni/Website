@@ -1,7 +1,7 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const axios = require('axios');
-const express = require('express'); // Webserver hinzufügen
+const express = require('express');
 
 const client = new Client({
   intents: [
@@ -48,7 +48,15 @@ const commands = [
     .setName('remove')
     .setDescription('Entfernt einen Benutzer aus der Berechtigungsliste.')
     .addUserOption(option =>
-      option.setName('user').setDescription('Discord-Nutzer').setRequired(true))
+      option.setName('user').setDescription('Discord-Nutzer').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('view')
+    .setDescription('Zeigt verschiedene Listen an.')
+    .addSubcommand(sub =>
+      sub
+        .setName('whitelist')
+        .setDescription('Zeigt alle Benutzer in der Whitelist an.')
+    ),
 ].map(command => command.toJSON());
 
 client.once('ready', async () => {
@@ -73,7 +81,7 @@ async function getRobloxUserInfo(username) {
       excludeBannedUsers: false
     });
     return res.data.data[0];
-  } catch (error) {
+  } catch {
     return null;
   }
 }
@@ -105,25 +113,89 @@ client.on('interactionCreate', async interaction => {
     await interaction.deferReply();
 
     if (commandName === 'add' || commandName === 'remove') {
-      // UserOptionen
       const targetUser = interaction.options.getUser('user');
       if (!targetUser) return interaction.editReply('❌ Bitte gib einen gültigen Discord-Nutzer an.');
 
       if (commandName === 'add') {
         allowedUsers.add(targetUser.id);
-        return interaction.editReply(`✅ ${targetUser.tag} wurde zur Whitelist hinzugefügt.`);
+        await interaction.editReply(`✅ ${targetUser.tag} wurde zur Whitelist hinzugefügt.`);
+
+        if (logChannel) {
+          logChannel.send({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle('Whitelist Update')
+                .setDescription(`✅ Benutzer **${targetUser.tag}** (<@${targetUser.id}>) wurde zur Whitelist hinzugefügt.`)
+                .setColor(0x00FF00)
+                .setTimestamp()
+            ]
+          });
+        }
+        return;
       } else if (commandName === 'remove') {
         allowedUsers.delete(targetUser.id);
-        return interaction.editReply(`✅ ${targetUser.tag} wurde von der Whitelist entfernt.`);
+        await interaction.editReply(`✅ ${targetUser.tag} wurde von der Whitelist entfernt.`);
+
+        if (logChannel) {
+          logChannel.send({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle('Whitelist Update')
+                .setDescription(`❌ Benutzer **${targetUser.tag}** (<@${targetUser.id}>) wurde von der Whitelist entfernt.`)
+                .setColor(0xFF0000)
+                .setTimestamp()
+            ]
+          });
+        }
+        return;
+      }
+    } else if (commandName === 'view') {
+      const subcommand = interaction.options.getSubcommand();
+      if (subcommand === 'whitelist') {
+        if (allowedUsers.size === 0) {
+          await interaction.editReply('⚠️ Die Whitelist ist leer.');
+          return;
+        }
+
+        // Hole Userinfos von allowedUsers
+        const guild = client.guilds.cache.get(GUILD_ID);
+        if (!guild) {
+          await interaction.editReply('❌ Konnte den Server nicht finden.');
+          return;
+        }
+
+        let whitelistText = '';
+        for (const userId of allowedUsers) {
+          try {
+            const member = await guild.members.fetch(userId);
+            whitelistText += `• [${member.user.tag}](https://discord.com/users/${userId})\n`;
+          } catch {
+            whitelistText += `• <@${userId}> (User nicht gefunden)\n`;
+          }
+        }
+
+        // Text zu lang? Dann kürzen
+        if (whitelistText.length > 4000) {
+          whitelistText = whitelistText.slice(0, 3997) + '...';
+        }
+
+        const embed = new EmbedBuilder()
+          .setTitle('Whitelist Übersicht')
+          .setDescription(whitelistText)
+          .setColor(0x00AAFF)
+          .setFooter({ text: `Whitelist Größe: ${allowedUsers.size}` })
+          .setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
+        return;
       }
     } else {
-      // StringOptionen für Roblox-Benutzernamen
+      // Ban/Tempban/Unban/Kick mit Roblox Username (StringOption)
       const username = interaction.options.getString('user');
-      const duration = interaction.options.getString('dauer'); // nur für tempban
+      const duration = interaction.options.getString('dauer');
 
       if (!username) return interaction.editReply('⚠️ Kein Roblox-Benutzername angegeben.');
 
-      // Roblox-User abfragen
       const robloxUser = await getRobloxUserInfo(username);
 
       if (!robloxUser) {
@@ -134,24 +206,21 @@ client.on('interactionCreate', async interaction => {
       const robloxProfile = `https://www.roblox.com/users/${robloxId}/profile`;
       const avatar = `https://www.roblox.com/headshot-thumbnail/image?userId=${robloxId}&width=150&height=150&format=png`;
 
-      // Aktion an externe API senden
       await sendAction(username, commandName, duration);
 
       const successMsg = `✅ **${commandName.toUpperCase()}** für **${username}** wurde ausgeführt von ${user.tag}`;
       await interaction.editReply(successMsg);
 
-      // Loggen im Log-Channel
       if (logChannel) {
         logChannel.send({
           embeds: [
-            {
-              title: `🛠️ Aktion: ${commandName.toUpperCase()}`,
-              description: `👤 Roblox-Name: **${username}**\n🔗 [Zum Profil](${robloxProfile})\n🧑‍💻 Ausgeführt von: ${user.tag}`,
-              thumbnail: { url: avatar },
-              color: 0xff0000,
-              footer: { text: 'Roblox-Moderation via Discord' },
-              timestamp: new Date().toISOString()
-            }
+            new EmbedBuilder()
+              .setTitle(`🛠️ Aktion: ${commandName.toUpperCase()}`)
+              .setDescription(`👤 Roblox-Name: **${username}**\n🔗 [Zum Profil](${robloxProfile})\n🧑‍💻 Ausgeführt von: ${user.tag}`)
+              .setThumbnail(avatar)
+              .setColor(0xff0000)
+              .setFooter({ text: 'Roblox-Moderation via Discord' })
+              .setTimestamp()
           ]
         });
       }
@@ -161,12 +230,11 @@ client.on('interactionCreate', async interaction => {
     if (logChannel) {
       logChannel.send({
         embeds: [
-          {
-            title: '⚠️ FEHLER BEI COMMAND',
-            description: `👤 Roblox-Name: **${interaction.options.getString('user') || 'unbekannt'}**\n❌ Fehler: \`${err.response?.data?.error || err.message}\`\n🧑‍💻 Von: ${user.tag}`,
-            color: 0xff3300,
-            timestamp: new Date().toISOString()
-          }
+          new EmbedBuilder()
+            .setTitle('⚠️ FEHLER BEI COMMAND')
+            .setDescription(`👤 Roblox-Name: **${interaction.options.getString('user') || 'unbekannt'}**\n❌ Fehler: \`${err.response?.data?.error || err.message}\`\n🧑‍💻 Von: ${user.tag}`)
+            .setColor(0xff3300)
+            .setTimestamp()
         ]
       });
     }

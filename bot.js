@@ -12,7 +12,6 @@ const client = new Client({
 });
 
 const LOG_CHANNEL_ID = '1373777502073389219'; // Deine Log-Channel-ID
-const GUILD_ID = '1361770059575591143';       // Deine Guild-ID
 const OWNER_IDS = ['1079510826651758713', '1098314958900568094']; // Deine Owner-IDs
 let allowedUsers = new Set(OWNER_IDS);
 
@@ -63,12 +62,12 @@ client.once('ready', async () => {
   console.log(`✅ Bot ist online als ${client.user.tag}`);
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
-    console.log('🔄 Registriere Slash-Commands...');
+    console.log('🔄 Registriere globale Slash-Commands...');
     await rest.put(
-      Routes.applicationGuildCommands(process.env.CLIENT_ID, GUILD_ID),
+      Routes.applicationCommands(process.env.CLIENT_ID),
       { body: commands }
     );
-    console.log('✅ Slash-Commands registriert.');
+    console.log('✅ Globale Slash-Commands registriert. (Achtung: bis zu 1 Stunde Verzögerung)');
   } catch (error) {
     console.error('❌ Fehler beim Registrieren:', error);
   }
@@ -110,7 +109,7 @@ client.on('interactionCreate', async interaction => {
   }
 
   try {
-    await interaction.deferReply({ ephemeral: commandName !== 'view' }); // Nur bei /view nicht ephemeral
+    await interaction.deferReply({ ephemeral: commandName !== 'view' }); // Nur /view nicht ephemeral
 
     if (commandName === 'add' || commandName === 'remove') {
       const targetUser = interaction.options.getUser('user');
@@ -152,25 +151,29 @@ client.on('interactionCreate', async interaction => {
     } else if (commandName === 'view') {
       const subcommand = interaction.options.getSubcommand();
       if (subcommand === 'whitelist') {
-        const guild = client.guilds.cache.get(GUILD_ID);
+        const guilds = client.guilds.cache;
+        if (guilds.size === 0) {
+          await interaction.editReply('❌ Der Bot ist in keinem Server.');
+          return;
+        }
+
+        const guild = guilds.first();
+
         if (!guild) {
           await interaction.editReply('❌ Konnte den Server nicht finden.');
           return;
         }
 
-        // Wenn whitelist leer (nur Owner drin), immer anzeigen
         if (allowedUsers.size === 0) {
           await interaction.editReply('⚠️ Die Whitelist ist leer.');
           return;
         }
 
-        // Erstelle Embed mit allen Whitelist-Nutzern, inkl. Rank (Owner oder Moderator)
         const embed = new EmbedBuilder()
           .setTitle('Whitelist Übersicht')
           .setColor(0x00AAFF)
           .setTimestamp();
 
-        // Für jeden User in allowedUsers: 
         for (const userId of allowedUsers) {
           try {
             const member = await guild.members.fetch(userId);
@@ -180,7 +183,6 @@ client.on('interactionCreate', async interaction => {
               value: `[Discord-Profil](https://discord.com/users/${userId})`,
               inline: true,
             });
-            embed.setThumbnail(member.user.displayAvatarURL({ dynamic: true }));
           } catch {
             embed.addFields({
               name: `Unbekannter Benutzer (${userId})`,
@@ -234,7 +236,7 @@ client.on('interactionCreate', async interaction => {
         embeds: [
           new EmbedBuilder()
             .setTitle('⚠️ FEHLER BEI COMMAND')
-            .setDescription(`👤 Roblox-Name: **${interaction.options.getString('user') || 'unbekannt'}**\n❌ Fehler: \`${err.response?.data?.error || err.message}\`\n🧑‍💻 Von: ${user.tag}`)
+            .setDescription(`❌ Fehler: \`${err.response?.data?.error || err.message}\`\n🧑‍💻 Von: ${user.tag}`)
             .setColor(0xff3300)
             .setTimestamp()
         ]
@@ -245,7 +247,9 @@ client.on('interactionCreate', async interaction => {
 
 client.login(process.env.DISCORD_TOKEN);
 
-// Webserver
+// =====================
+// Webserver für Render
+// =====================
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -256,4 +260,3 @@ app.get('/', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🌐 Webserver läuft auf Port ${PORT}`);
 });
-

@@ -86,13 +86,11 @@ async function sendAction(user, action, duration = null) {
 
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.channel.type === 1)
+
+  if (interaction.channel.type === 1) // DM-Check
     return interaction.reply({ content: '❌ Diese Commands können nicht in DMs verwendet werden.', ephemeral: true });
 
   const { commandName, user } = interaction;
-  const username = interaction.options.getString('user');
-  const duration = interaction.options.getString('dauer');
-  const targetUser = interaction.options.getUser('user');
   const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
 
   if (!OWNER_IDS.includes(user.id) && !allowedUsers.has(user.id)) {
@@ -106,41 +104,57 @@ client.on('interactionCreate', async interaction => {
   try {
     await interaction.deferReply();
 
-    if (commandName === 'add') {
-      allowedUsers.add(targetUser.id);
-      return interaction.editReply(`✅ ${targetUser.tag} wurde zur Whitelist hinzugefügt.`);
-    }
+    if (commandName === 'add' || commandName === 'remove') {
+      // UserOptionen
+      const targetUser = interaction.options.getUser('user');
+      if (!targetUser) return interaction.editReply('❌ Bitte gib einen gültigen Discord-Nutzer an.');
 
-    if (commandName === 'remove') {
-      allowedUsers.delete(targetUser.id);
-      return interaction.editReply(`✅ ${targetUser.tag} wurde von der Whitelist entfernt.`);
-    }
+      if (commandName === 'add') {
+        allowedUsers.add(targetUser.id);
+        return interaction.editReply(`✅ ${targetUser.tag} wurde zur Whitelist hinzugefügt.`);
+      } else if (commandName === 'remove') {
+        allowedUsers.delete(targetUser.id);
+        return interaction.editReply(`✅ ${targetUser.tag} wurde von der Whitelist entfernt.`);
+      }
+    } else {
+      // StringOptionen für Roblox-Benutzernamen
+      const username = interaction.options.getString('user');
+      const duration = interaction.options.getString('dauer'); // nur für tempban
 
-    if (!username) return interaction.editReply('⚠️ Kein Benutzername angegeben.');
+      if (!username) return interaction.editReply('⚠️ Kein Roblox-Benutzername angegeben.');
 
-    const robloxUser = await getRobloxUserInfo(username);
-    const robloxId = robloxUser?.id ?? 'unbekannt';
-    const robloxProfile = robloxUser ? `https://www.roblox.com/users/${robloxId}/profile` : 'Nicht gefunden';
-    const avatar = robloxUser ? `https://www.roblox.com/headshot-thumbnail/image?userId=${robloxId}&width=150&height=150&format=png` : null;
+      // Roblox-User abfragen
+      const robloxUser = await getRobloxUserInfo(username);
 
-    await sendAction(username, commandName, duration);
+      if (!robloxUser) {
+        return interaction.editReply(`❌ Roblox-Benutzer "${username}" wurde nicht gefunden.`);
+      }
 
-    const successMsg = `✅ **${commandName.toUpperCase()}** für **${username}** wurde ausgeführt von ${user.tag}`;
-    await interaction.editReply(successMsg);
+      const robloxId = robloxUser.id;
+      const robloxProfile = `https://www.roblox.com/users/${robloxId}/profile`;
+      const avatar = `https://www.roblox.com/headshot-thumbnail/image?userId=${robloxId}&width=150&height=150&format=png`;
 
-    if (logChannel) {
-      logChannel.send({
-        embeds: [
-          {
-            title: `🛠️ Aktion: ${commandName.toUpperCase()}`,
-            description: `👤 Roblox-Name: **${username}**\n🔗 [Zum Profil](${robloxProfile})\n🧑‍💻 Ausgeführt von: ${user.tag}`,
-            thumbnail: avatar ? { url: avatar } : undefined,
-            color: 0xff0000,
-            footer: { text: 'Roblox-Moderation via Discord' },
-            timestamp: new Date().toISOString()
-          }
-        ]
-      });
+      // Aktion an externe API senden
+      await sendAction(username, commandName, duration);
+
+      const successMsg = `✅ **${commandName.toUpperCase()}** für **${username}** wurde ausgeführt von ${user.tag}`;
+      await interaction.editReply(successMsg);
+
+      // Loggen im Log-Channel
+      if (logChannel) {
+        logChannel.send({
+          embeds: [
+            {
+              title: `🛠️ Aktion: ${commandName.toUpperCase()}`,
+              description: `👤 Roblox-Name: **${username}**\n🔗 [Zum Profil](${robloxProfile})\n🧑‍💻 Ausgeführt von: ${user.tag}`,
+              thumbnail: { url: avatar },
+              color: 0xff0000,
+              footer: { text: 'Roblox-Moderation via Discord' },
+              timestamp: new Date().toISOString()
+            }
+          ]
+        });
+      }
     }
   } catch (err) {
     await interaction.editReply('❌ Fehler beim Ausführen der Aktion.');
@@ -149,7 +163,7 @@ client.on('interactionCreate', async interaction => {
         embeds: [
           {
             title: '⚠️ FEHLER BEI COMMAND',
-            description: `👤 Roblox-Name: **${username}**\n❌ Fehler: \`${err.response?.data?.error || err.message}\`\n🧑‍💻 Von: ${user.tag}`,
+            description: `👤 Roblox-Name: **${interaction.options.getString('user') || 'unbekannt'}**\n❌ Fehler: \`${err.response?.data?.error || err.message}\`\n🧑‍💻 Von: ${user.tag}`,
             color: 0xff3300,
             timestamp: new Date().toISOString()
           }

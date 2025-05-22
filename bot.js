@@ -2,8 +2,6 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const axios = require('axios');
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 
 const client = new Client({
   intents: [
@@ -16,23 +14,7 @@ const client = new Client({
 const LOG_CHANNEL_ID = '1373777502073389219';
 const GUILD_ID = '1361770059575591143';
 const OWNER_IDS = ['1079510826651758713', '1098314958900568094'];
-
-const whitelistPath = path.join(__dirname, 'whitelist.json');
-
-// Whitelist aus Datei laden oder neue erstellen
-let allowedUsers = new Set();
-try {
-  const data = fs.readFileSync(whitelistPath, 'utf8');
-  const parsed = JSON.parse(data);
-  allowedUsers = new Set(parsed);
-} catch {
-  allowedUsers = new Set(OWNER_IDS);
-  saveWhitelist();
-}
-
-function saveWhitelist() {
-  fs.writeFileSync(whitelistPath, JSON.stringify([...allowedUsers], null, 2));
-}
+let allowedUsers = new Set(OWNER_IDS); // Owner automatisch in Whitelist
 
 // Beispielhafte Datenstruktur für gebannte Roblox-User
 const bannedUsers = new Map([
@@ -128,27 +110,16 @@ async function getRobloxAvatarUrl(userId) {
   }
 }
 
-// Dummy-Funktion für externe API-Aktion
-async function sendAction(user, action, duration = null) {
-  // Beispiel: await axios.post(process.env.API_URL, { user, action, duration });
-  return; // Dummy
-}
-
-// Prüfen, ob ein Spieler im Spiel ist (basierend auf PlaceId)
-async function isPlayerInGame(userId, placeId) {
+// Aktion an externe API senden, mit userId (Roblox Player ID) statt Username
+async function sendAction(userId, action, duration = null) {
   try {
-    // Beispielhafte API, muss ggf. angepasst werden
-    const res = await axios.get(`https://games.roblox.com/v1/games/${placeId}/servers/active`);
-    if (!res.data.data) return false;
-
-    for (const server of res.data.data) {
-      if (server.playing.includes(userId)) {
-        return true;
-      }
-    }
-    return false;
-  } catch {
-    return false;
+    await axios.post('https://website-bjz4.onrender.com', {
+      userId,
+      action,
+      duration,
+    });
+  } catch (error) {
+    console.error('Fehler beim Senden der Aktion an API:', error.message);
   }
 }
 
@@ -181,7 +152,6 @@ client.on('interactionCreate', async interaction => {
       }
 
       allowedUsers.add(targetUser.id);
-      saveWhitelist();
 
       const embed = new EmbedBuilder()
         .setTitle('➕ Zur Whitelist hinzugefügt')
@@ -206,7 +176,6 @@ client.on('interactionCreate', async interaction => {
       }
 
       allowedUsers.delete(targetUser.id);
-      saveWhitelist();
 
       const embed = new EmbedBuilder()
         .setTitle('➖ Von Whitelist entfernt')
@@ -300,25 +269,18 @@ client.on('interactionCreate', async interaction => {
       if (!username) return interaction.editReply('⚠️ Kein Benutzername angegeben.');
 
       const duration = interaction.options.getString('dauer');
-      const robloxUserId = await getRobloxUserId(username);
 
+      // Benutzer-ID aus Roblox holen
+      const robloxUserId = await getRobloxUserId(username);
       if (!robloxUserId) {
         return interaction.editReply(`❌ Roblox-Benutzer **${username}** wurde nicht gefunden.`);
       }
 
-      if (commandName === 'kick') {
-        const placeId = 118073884989892; // <- DEINE PLACE ID HIER EINGEFÜGT
-
-        const ingame = await isPlayerInGame(robloxUserId, placeId);
-        if (!ingame) {
-          return interaction.editReply(`❌ ${username} ist derzeit nicht im Spiel und kann nicht gekickt werden.`);
-        }
-      }
-
-      await sendAction(username, commandName, duration);
-
       const robloxProfile = `https://www.roblox.com/users/${robloxUserId}/profile`;
       const avatarUrl = await getRobloxAvatarUrl(robloxUserId);
+
+      // Aktion an deine API senden (mit robloxUserId)
+      await sendAction(robloxUserId, commandName, duration);
 
       const successEmbed = new EmbedBuilder()
         .setTitle(`✅ ${commandName.toUpperCase()} ausgeführt`)
@@ -337,7 +299,7 @@ client.on('interactionCreate', async interaction => {
   } catch (err) {
     const errorEmbed = new EmbedBuilder()
       .setTitle('❌ Fehler bei Ausführung')
-      .setDescription(`❌ Fehler: \`${err.message || err}\`\n🧑‍💻 Von: ${user.tag}`)
+      .setDescription(`❌ Fehler: ${err.message || err}\n🧑‍💻 Von: ${user.tag}`)
       .setColor(0xff0000)
       .setTimestamp();
 

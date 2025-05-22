@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const axios = require('axios');
 const express = require('express');
 
@@ -14,9 +14,9 @@ const client = new Client({
 const LOG_CHANNEL_ID = '1373777502073389219';
 const GUILD_ID = '1361770059575591143';
 const OWNER_IDS = ['1079510826651758713', '1098314958900568094'];
-let allowedUsers = new Set(OWNER_IDS); // Owner automatisch in Whitelist
+let allowedUsers = new Set(OWNER_IDS); // Owner immer in Whitelist
 
-// Beispielhafte Datenstruktur für gebannte Roblox-User
+// Beispielhafte gebannte Roblox-User (lowercase keys)
 const bannedUsers = new Map([
   ['banneduser123', 'Permanent gebannt'],
   ['tempbanneduser', 'Temporär gebannt bis 2025-06-01'],
@@ -63,7 +63,7 @@ const commands = [
     .setDescription('Zeigt Informationen zu einem Roblox-Benutzer an.')
     .addStringOption(option =>
       option.setName('robloxuser').setDescription('Roblox-Benutzername').setRequired(true)),
-].map(command => command.toJSON());
+].map(cmd => cmd.toJSON());
 
 client.once('ready', async () => {
   console.log(`✅ Bot ist online als ${client.user.tag}`);
@@ -110,22 +110,62 @@ async function getRobloxAvatarUrl(userId) {
   }
 }
 
-// Aktion an externe API senden, mit userId (Roblox Player ID) statt Username
-async function sendAction(userId, action, duration = null) {
+// Aktion an externe API senden
+async function sendAction(userId, action, duration = null, reason = null) {
   try {
     await axios.post('https://website-bjz4.onrender.com', {
       userId,
       action,
       duration,
+      reason
     });
   } catch (error) {
-    console.error('Fehler beim Senden der Aktion an API:', error.message);
+    console.error('Fehler bei sendAction:', error);
   }
 }
 
 client.on('interactionCreate', async interaction => {
+  if (interaction.isButton()) {
+    // Button für Entbannen
+    if (interaction.customId.startsWith('unban_')) {
+      if (!OWNER_IDS.includes(interaction.user.id) && !allowedUsers.has(interaction.user.id)) {
+        return interaction.reply({ content: '❌ Du hast keine Berechtigung, diesen Button zu benutzen.', ephemeral: true });
+      }
+
+      const username = interaction.customId.slice(6);
+      if (!bannedUsers.has(username.toLowerCase())) {
+        return interaction.reply({ content: `ℹ️ Nutzer **${username}** ist nicht gebannt.`, ephemeral: true });
+      }
+
+      bannedUsers.delete(username.toLowerCase());
+
+      // Optional: Sende Entbann-Request an externe API
+      const robloxUserId = await getRobloxUserId(username);
+      if (robloxUserId) {
+        await sendAction(robloxUserId, 'unban');
+      }
+
+      await interaction.update({
+        content: `✅ Nutzer **${username}** wurde entbannt.`,
+        components: []
+      });
+
+      // Loggen
+      const logChannel = await client.channels.fetch(LOG_CHANNEL_ID).catch(() => null);
+      if (logChannel) {
+        const embed = new EmbedBuilder()
+          .setTitle('🔓 Nutzer entbannt')
+          .setDescription(`👤 Roblox-Nutzer: **${username}**\n🧑‍💻 Von: ${interaction.user.tag}`)
+          .setColor(0x00ff00)
+          .setTimestamp();
+        await logChannel.send({ embeds: [embed] });
+      }
+      return;
+    }
+  }
+
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.channel.type === 1) // DMs
+  if (interaction.channel.type === 1) // DMs ausschließen
     return interaction.reply({ content: '❌ Diese Commands können nicht in DMs verwendet werden.', ephemeral: true });
 
   const { commandName, user } = interaction;
@@ -135,13 +175,13 @@ client.on('interactionCreate', async interaction => {
     return interaction.reply({ content: '❌ Zugriff verweigert. Du bist nicht berechtigt, diesen Command zu nutzen.', ephemeral: true });
   }
   if (['add', 'remove'].includes(commandName) && !OWNER_IDS.includes(user.id)) {
-    return interaction.reply({ content: '❌ Nur System-Administratoren dürfen diesen Command verwenden.', ephemeral: true });
+    return interaction.reply({ content: '❌ Nur Owner dürfen diesen Command verwenden.', ephemeral: true });
   }
 
-  const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
+  const logChannel = await client.channels.fetch(LOG_CHANNEL_ID).catch(() => null);
 
   try {
-    await interaction.deferReply({ ephemeral: false }); // Jeder sieht die Antwort
+    await interaction.deferReply({ ephemeral: false }); // Antwort für alle sichtbar
 
     if (commandName === 'add') {
       const targetUser = interaction.options.getUser('user');
@@ -201,7 +241,6 @@ client.on('interactionCreate', async interaction => {
         try {
           const member = await client.users.fetch(id);
           const profileLink = `[${member.tag}](https://discord.com/users/${member.id})`;
-
           const line = `${profileLink} — Rang: **${OWNER_IDS.includes(id) ? 'Owner' : 'Moderator'}**`;
 
           if (OWNER_IDS.includes(id)) {
@@ -210,6 +249,7 @@ client.on('interactionCreate', async interaction => {
             moderators.push(line);
           }
         } catch {
+          // Falls User nicht abrufbar
           if (OWNER_IDS.includes(id)) {
             owners.push(`❓ <@${id}> — Owner`);
           } else {
@@ -220,10 +260,10 @@ client.on('interactionCreate', async interaction => {
 
       let description = '';
       if (owners.length > 0) {
-        description += '**------ Owner:**\n' + owners.join('\n') + '\n\n';
+        description += '**--- Owner ---**\n' + owners.join('\n') + '\n\n';
       }
       if (moderators.length > 0) {
-        description += '**------ Moderatoren:**\n' + moderators.join('\n');
+        description += '**--- Moderatoren ---**\n' + moderators.join('\n');
       }
       if (description === '') {
         description = 'Keine Whitelist-Mitglieder gefunden.';
@@ -245,79 +285,115 @@ client.on('interactionCreate', async interaction => {
       const avatarUrl = await getRobloxAvatarUrl(userId);
       const profileUrl = `https://www.roblox.com/users/${userId}/profile`;
 
-      const banStatus = bannedUsers.has(robloxUserName.toLowerCase())
-        ? `🚫 Status: **${bannedUsers.get(robloxUserName.toLowerCase())}**`
-        : '✅ Status: **Nicht gebannt**';
+      const isBanned = bannedUsers.has(robloxUserName.toLowerCase());
+      const banReason = isBanned ? bannedUsers.get(robloxUserName.toLowerCase()) : null;
 
       const embed = new EmbedBuilder()
         .setTitle(`Roblox User: ${robloxUserName}`)
         .setURL(profileUrl)
-        .setDescription(`[Profil ansehen](${profileUrl})\n\n${banStatus}`)
-        .setColor(0x00ff00)
+        .setDescription(`[Profil auf Roblox](${profileUrl})`)
+        .setColor(isBanned ? 0xff0000 : 0x00ff00)
         .setTimestamp();
 
-      if (avatarUrl) {
-        embed.setThumbnail(avatarUrl);
+      if (avatarUrl) embed.setThumbnail(avatarUrl);
+
+      embed.addFields(
+        {
+          name: 'Status',
+          value: isBanned ? `🚫 Gebannt: ${banReason}` : '✅ Nicht gebannt',
+          inline: false,
+        }
+      );
+
+      let components = [];
+
+      if (isBanned) {
+        // Button zum Entbannen mit Benutzername im customId
+        const unbanBtn = new ButtonBuilder()
+          .setCustomId(`unban_${robloxUserName}`)
+          .setLabel('Entbannen')
+          .setStyle(ButtonStyle.Success);
+        components.push(new ActionRowBuilder().addComponents(unbanBtn));
       }
 
-      return interaction.editReply({ embeds: [embed] });
+      return interaction.editReply({ embeds: [embed], components });
     }
 
-    // Ban, Tempban, Unban, Kick Commands
+    // Ban, TempBan, Unban, Kick Kommandos verarbeiten:
     if (['ban', 'tempban', 'unban', 'kick'].includes(commandName)) {
-      const username = interaction.options.getString('user');
-      if (!username) return interaction.editReply('⚠️ Kein Benutzername angegeben.');
+      const robloxUserName = interaction.options.getString('user');
+      if (!robloxUserName) return interaction.editReply('⚠️ Kein Roblox-Benutzername angegeben.');
 
-      const duration = interaction.options.getString('dauer');
+      const userId = await getRobloxUserId(robloxUserName);
+      if (!userId) return interaction.editReply(`❌ Roblox-Benutzer **${robloxUserName}** wurde nicht gefunden.`);
 
-      // Benutzer-ID aus Roblox holen
-      const robloxUserId = await getRobloxUserId(username);
-      if (!robloxUserId) {
-        return interaction.editReply(`❌ Roblox-Benutzer **${username}** wurde nicht gefunden.`);
+      if (commandName === 'ban') {
+        bannedUsers.set(robloxUserName.toLowerCase(), 'Permanent gebannt');
+        await sendAction(userId, 'ban');
+        const embed = new EmbedBuilder()
+          .setTitle('🚫 Permanent gebannt')
+          .setDescription(`Der Roblox-Nutzer **${robloxUserName}** wurde permanent gebannt.`)
+          .setColor(0xff0000)
+          .setTimestamp();
+        if (logChannel) await logChannel.send({ embeds: [embed] });
+        return interaction.editReply({ embeds: [embed] });
       }
 
-      const robloxProfile = `https://www.roblox.com/users/${robloxUserId}/profile`;
-      const avatarUrl = await getRobloxAvatarUrl(robloxUserId);
-
-      // Aktion an deine API senden (mit robloxUserId)
-      await sendAction(robloxUserId, commandName, duration);
-
-      const successEmbed = new EmbedBuilder()
-        .setTitle(`✅ ${commandName.toUpperCase()} ausgeführt`)
-        .setDescription(`👤 Roblox: **${username}**\n🔗 [Profil](${robloxProfile})\n🧑‍💻 Von: ${user.tag}`)
-        .setColor(0xff0000)
-        .setTimestamp();
-
-      if (avatarUrl) {
-        successEmbed.setThumbnail(avatarUrl);
+      if (commandName === 'tempban') {
+        const duration = interaction.options.getString('dauer');
+        bannedUsers.set(robloxUserName.toLowerCase(), `Temporär gebannt für ${duration}`);
+        await sendAction(userId, 'tempban', duration);
+        const embed = new EmbedBuilder()
+          .setTitle('⏳ Temporär gebannt')
+          .setDescription(`Der Roblox-Nutzer **${robloxUserName}** wurde temporär gebannt für: **${duration}**.`)
+          .setColor(0xff9900)
+          .setTimestamp();
+        if (logChannel) await logChannel.send({ embeds: [embed] });
+        return interaction.editReply({ embeds: [embed] });
       }
 
-      if (logChannel) await logChannel.send({ embeds: [successEmbed] });
-      return interaction.editReply({ embeds: [successEmbed] });
+      if (commandName === 'unban') {
+        if (!bannedUsers.has(robloxUserName.toLowerCase())) {
+          return interaction.editReply(`ℹ️ Roblox-Nutzer **${robloxUserName}** ist nicht gebannt.`);
+        }
+        bannedUsers.delete(robloxUserName.toLowerCase());
+        await sendAction(userId, 'unban');
+        const embed = new EmbedBuilder()
+          .setTitle('🔓 Entbannt')
+          .setDescription(`Der Roblox-Nutzer **${robloxUserName}** wurde entbannt.`)
+          .setColor(0x00ff00)
+          .setTimestamp();
+        if (logChannel) await logChannel.send({ embeds: [embed] });
+        return interaction.editReply({ embeds: [embed] });
+      }
+
+      if (commandName === 'kick') {
+        await sendAction(userId, 'kick');
+        const embed = new EmbedBuilder()
+          .setTitle('👢 Gekickt')
+          .setDescription(`Der Roblox-Nutzer **${robloxUserName}** wurde aus dem Spiel gekickt.`)
+          .setColor(0xffff00)
+          .setTimestamp();
+        if (logChannel) await logChannel.send({ embeds: [embed] });
+        return interaction.editReply({ embeds: [embed] });
+      }
     }
-
-  } catch (err) {
-    const errorEmbed = new EmbedBuilder()
-      .setTitle('❌ Fehler bei Ausführung')
-      .setDescription(`❌ Fehler: ${err.message || err}\n🧑‍💻 Von: ${user.tag}`)
-      .setColor(0xff0000)
-      .setTimestamp();
-
-    if (logChannel) await logChannel.send({ embeds: [errorEmbed] });
-    return interaction.editReply({ embeds: [errorEmbed] });
+  } catch (error) {
+    console.error('Fehler bei Command:', error);
+    return interaction.editReply('❌ Ein Fehler ist aufgetreten. Bitte versuche es später erneut.');
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
-
-// Express Webserver für Statusseite
+// Express-Webserver nur als Beispiel (Statusseite o.ä.)
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-  res.send('✅ Der Discord-Bot läuft.');
+  res.send('Bot ist online ✅');
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌐 Webserver läuft auf Port ${PORT}`);
+app.listen(PORT, () => {
+  console.log(`Webserver läuft auf Port ${PORT}`);
 });
+
+client.login(process.env.DISCORD_TOKEN);

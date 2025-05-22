@@ -379,21 +379,14 @@ client.on('interactionCreate', async interaction => {
       }
     }
   } catch (error) {
-    console.error('Fehler bei Command:', error);
+    console.error('Fehler bei Command-Verarbeitung:', error);
     return interaction.editReply('❌ Ein Fehler ist aufgetreten. Bitte versuche es später erneut.');
   }
 });
 
-// Express-Webserver nur als Beispiel (Statusseite o.ä.)
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.get('/', (req, res) => {
-  res.send('Bot ist online ✅');
-});
-
-app.listen(PORT, () => {
-  console.log(`Webserver läuft auf Port ${PORT}`);
-});
-
 client.login(process.env.DISCORD_TOKEN);
+
+// Express-Webserver zum Offenhalten des Bots (optional)
+const app = express();
+app.get('/', (req, res) => res.send('Bot läuft...'));
+app.listen(process.env.PORT || 3000);

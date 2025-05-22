@@ -17,42 +17,22 @@ const LOG_CHANNEL_ID = '1373777502073389219';
 const GUILD_ID = '1361770059575591143';
 const OWNER_IDS = ['1079510826651758713', '1098314958900568094'];
 
-// Datei-Pfad für Whitelist speichern
 const whitelistPath = path.join(__dirname, 'whitelist.json');
 
-// Whitelist laden
-function loadWhitelist() {
-  try {
-    if (!fs.existsSync(whitelistPath)) {
-      fs.writeFileSync(whitelistPath, JSON.stringify([]));
-      return new Set();
-    }
-    const data = fs.readFileSync(whitelistPath, 'utf-8');
-    const arr = JSON.parse(data);
-    return new Set(arr);
-  } catch (error) {
-    console.error('Fehler beim Laden der Whitelist:', error);
-    return new Set();
-  }
+// Whitelist aus Datei laden oder neue erstellen
+let allowedUsers = new Set();
+try {
+  const data = fs.readFileSync(whitelistPath, 'utf8');
+  const parsed = JSON.parse(data);
+  allowedUsers = new Set(parsed);
+} catch {
+  allowedUsers = new Set(OWNER_IDS);
+  saveWhitelist();
 }
 
-// Whitelist speichern
-function saveWhitelist(set) {
-  try {
-    const arr = Array.from(set);
-    fs.writeFileSync(whitelistPath, JSON.stringify(arr, null, 2));
-  } catch (error) {
-    console.error('Fehler beim Speichern der Whitelist:', error);
-  }
+function saveWhitelist() {
+  fs.writeFileSync(whitelistPath, JSON.stringify([...allowedUsers], null, 2));
 }
-
-let allowedUsers = loadWhitelist();
-
-// Owner automatisch in Whitelist (falls noch nicht drin)
-for (const ownerId of OWNER_IDS) {
-  allowedUsers.add(ownerId);
-}
-saveWhitelist(allowedUsers); // Sicherstellen, dass Owner in Datei stehen
 
 // Beispielhafte Datenstruktur für gebannte Roblox-User
 const bannedUsers = new Map([
@@ -148,10 +128,28 @@ async function getRobloxAvatarUrl(userId) {
   }
 }
 
-// Aktion an externe API senden (dummy, anpassen!)
+// Dummy-Funktion für externe API-Aktion
 async function sendAction(user, action, duration = null) {
   // Beispiel: await axios.post(process.env.API_URL, { user, action, duration });
   return; // Dummy
+}
+
+// Prüfen, ob ein Spieler im Spiel ist (basierend auf PlaceId)
+async function isPlayerInGame(userId, placeId) {
+  try {
+    // Beispielhafte API, muss ggf. angepasst werden
+    const res = await axios.get(`https://games.roblox.com/v1/games/${placeId}/servers/active`);
+    if (!res.data.data) return false;
+
+    for (const server of res.data.data) {
+      if (server.playing.includes(userId)) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 client.on('interactionCreate', async interaction => {
@@ -183,7 +181,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       allowedUsers.add(targetUser.id);
-      saveWhitelist(allowedUsers);
+      saveWhitelist();
 
       const embed = new EmbedBuilder()
         .setTitle('➕ Zur Whitelist hinzugefügt')
@@ -208,7 +206,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       allowedUsers.delete(targetUser.id);
-      saveWhitelist(allowedUsers);
+      saveWhitelist();
 
       const embed = new EmbedBuilder()
         .setTitle('➖ Von Whitelist entfernt')
@@ -302,12 +300,25 @@ client.on('interactionCreate', async interaction => {
       if (!username) return interaction.editReply('⚠️ Kein Benutzername angegeben.');
 
       const duration = interaction.options.getString('dauer');
-
       const robloxUserId = await getRobloxUserId(username);
-      const robloxProfile = robloxUserId ? `https://www.roblox.com/users/${robloxUserId}/profile` : 'Nicht gefunden';
-      const avatarUrl = robloxUserId ? await getRobloxAvatarUrl(robloxUserId) : null;
 
-      await sendAction(robloxUserId, commandName, duration); // Hier die ID schicken!
+      if (!robloxUserId) {
+        return interaction.editReply(`❌ Roblox-Benutzer **${username}** wurde nicht gefunden.`);
+      }
+
+      if (commandName === 'kick') {
+        const placeId = 118073884989892; // <- DEINE PLACE ID HIER EINGEFÜGT
+
+        const ingame = await isPlayerInGame(robloxUserId, placeId);
+        if (!ingame) {
+          return interaction.editReply(`❌ ${username} ist derzeit nicht im Spiel und kann nicht gekickt werden.`);
+        }
+      }
+
+      await sendAction(username, commandName, duration);
+
+      const robloxProfile = `https://www.roblox.com/users/${robloxUserId}/profile`;
+      const avatarUrl = await getRobloxAvatarUrl(robloxUserId);
 
       const successEmbed = new EmbedBuilder()
         .setTitle(`✅ ${commandName.toUpperCase()} ausgeführt`)

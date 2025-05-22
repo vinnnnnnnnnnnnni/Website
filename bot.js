@@ -271,233 +271,168 @@ client.on('interactionCreate', async interaction => {
       }
 
       let description = '';
-      if (owners.length > 0) {
-        description += '**--- Owner ---**\n' + owners.join('\n') + '\n\n';
-      }
-      if (moderators.length > 0) {
-        description += '**--- Moderatoren ---**\n' + moderators.join('\n');
-      }
-      if (description === '') {
-        description = 'Keine Whitelist-Mitglieder gefunden.';
-      }
+      if (owners.length) description += `__**Owner:**__\n${owners.join('\n')}\n\n`;
+      if (moderators.length) description += `__**Moderatoren:**__\n${moderators.join('\n')}`;
+
+      if (!description) description = 'Keine Whitelist-Mitglieder gefunden.';
 
       embed.setDescription(description);
       return interaction.editReply({ embeds: [embed] });
     }
 
     if (commandName === 'viewroblox') {
-      const robloxUserName = interaction.options.getString('robloxuser');
-      if (!robloxUserName) return interaction.editReply('⚠️ Kein Roblox-Benutzername angegeben.');
+      const robloxUser = interaction.options.getString('robloxuser');
+      if (!robloxUser) return interaction.editReply('⚠️ Kein Roblox-Benutzername angegeben.');
 
-      const userId = await getRobloxUserId(robloxUserName);
+      const userId = await getRobloxUserId(robloxUser);
       if (!userId) {
-        return interaction.editReply(`❌ Roblox-Benutzer **${robloxUserName}** wurde nicht gefunden.`);
+        return interaction.editReply(`❌ Roblox-Nutzer **${robloxUser}** nicht gefunden.`);
       }
 
       const avatarUrl = await getRobloxAvatarUrl(userId);
-      const profileUrl = `https://www.roblox.com/users/${userId}/profile`;
 
-      const isBanned = bannedUsers.has(robloxUserName.toLowerCase());
-      const banReason = isBanned ? bannedUsers.get(robloxUserName.toLowerCase()) : null;
+      const bannedInfo = bannedUsers.get(robloxUser.toLowerCase());
+      const bannedText = bannedInfo ? `🚫 **Status:** Gebannt\n**Grund:** ${bannedInfo}` : '✅ **Status:** Nicht gebannt';
 
       const embed = new EmbedBuilder()
-        .setTitle(`Roblox User: ${robloxUserName}`)
-        .setURL(profileUrl)
-        .setDescription(`[Profil auf Roblox](${profileUrl})`)
-        .setColor(isBanned ? COLOR_RED : COLOR_GREEN)
+        .setTitle(`${robloxUser}`)
+        .setURL(`https://www.roblox.com/users/${userId}/profile`)
+        .setThumbnail(avatarUrl || null)
+        .setColor(bannedInfo ? COLOR_RED : COLOR_GREEN)
+        .addFields(
+          { name: 'Roblox ID', value: userId.toString(), inline: true },
+          { name: 'Ban-Status', value: bannedText, inline: false }
+        )
         .setTimestamp();
 
-      if (avatarUrl) embed.setThumbnail(avatarUrl);
-
-      embed.addFields(
-        {
-          name: 'Status',
-          value: isBanned ? `🚫 Gebannt: ${banReason}` : '✅ Nicht gebannt',
-          inline: false,
-        }
-      );
-
-      let components = [];
-
-      if (isBanned) {
-        // Button zum Entbannen mit Benutzername im customId
-        const unbanBtn = new ButtonBuilder()
-          .setCustomId(`unban_${robloxUserName}`)
-          .setLabel('Entbannen')
-          .setStyle(ButtonStyle.Success);
-        components.push(new ActionRowBuilder().addComponents(unbanBtn));
-      }
-
-      return interaction.editReply({ embeds: [embed], components });
+      return interaction.editReply({ embeds: [embed] });
     }
 
-    // Funktionen für Ban, TempBan, Unban, Kick: mit Bestätigung via Button und 30s Zeitfenster
-    if (['ban', 'tempban', 'unban', 'kick'].includes(commandName)) {
-      const robloxUserName = interaction.options.getString('user');
-      if (!robloxUserName) return interaction.editReply('⚠️ Kein Roblox-Benutzername angegeben.');
+    // Ban permanent
+    if (commandName === 'ban') {
+      const robloxUser = interaction.options.getString('user');
+      if (!robloxUser) return interaction.editReply('⚠️ Kein Roblox-Benutzername angegeben.');
 
-      const robloxUserId = await getRobloxUserId(robloxUserName);
-      if (!robloxUserId) {
-        return interaction.editReply(`❌ Roblox-Benutzer **${robloxUserName}** wurde nicht gefunden.`);
+      const usernameLower = robloxUser.toLowerCase();
+      if (bannedUsers.has(usernameLower)) {
+        return interaction.editReply(`❗️ Nutzer **${robloxUser}** ist bereits gebannt.`);
       }
 
-      // Action specific data
-      let actionName = commandName;
-      let duration = null;
-      if (commandName === 'tempban') {
-        duration = interaction.options.getString('dauer');
-        if (!duration) return interaction.editReply('⚠️ Bitte gib eine Dauer für den temporären Bann an.');
-      }
+      const userId = await getRobloxUserId(robloxUser);
+      if (!userId) return interaction.editReply(`❌ Roblox-Nutzer **${robloxUser}** nicht gefunden.`);
 
-      // Embed-Farben und Button-Label
-      let embedColor = COLOR_LIGHTBLUE;
-      let buttonLabel = '';
-      let buttonStyle = ButtonStyle.Primary;
-      if (commandName === 'ban') {
-        buttonLabel = 'Permanent bannen';
-        embedColor = COLOR_LIGHTBLUE;
-        buttonStyle = ButtonStyle.Danger;
-      } else if (commandName === 'tempban') {
-        buttonLabel = `Temporär bannen (${duration})`;
-        embedColor = COLOR_LIGHTBLUE;
-        buttonStyle = ButtonStyle.Danger;
-      } else if (commandName === 'unban') {
-        buttonLabel = 'Entbannen';
-        embedColor = COLOR_LIGHTBLUE;
-        buttonStyle = ButtonStyle.Success;
-      } else if (commandName === 'kick') {
-        buttonLabel = 'Kick durchführen';
-        embedColor = COLOR_RED;
-        buttonStyle = ButtonStyle.Danger;
-      }
+      bannedUsers.set(usernameLower, 'Permanent gebannt');
+      await sendAction(userId, 'ban');
 
-      const robloxProfileLink = createRobloxProfileLink(robloxUserName, robloxUserId);
-
-      // Bestätigungs-Embed
-      const confirmEmbed = new EmbedBuilder()
-        .setTitle('⚠️ Bitte bestätigen')
-        .setDescription(`Möchtest du den Roblox-Spieler **${robloxProfileLink}** wirklich ${buttonLabel}?`)
-        .setColor(embedColor)
+      const embed = new EmbedBuilder()
+        .setTitle('⛔️ Nutzer gebannt')
+        .setDescription(`👤 Roblox-Nutzer: **${robloxUser}** wurde permanent gebannt.`)
+        .setColor(COLOR_RED)
         .setTimestamp();
 
-      const confirmButton = new ButtonBuilder()
-        .setCustomId(`confirm_${commandName}_${robloxUserName}`)
-        .setLabel(buttonLabel)
-        .setStyle(buttonStyle);
+      if (logChannel) await logChannel.send({ embeds: [embed] });
 
-      const cancelButton = new ButtonBuilder()
-        .setCustomId(`cancel_${commandName}_${robloxUserName}`)
-        .setLabel('Abbrechen')
-        .setStyle(ButtonStyle.Secondary);
-
-      const row = new ActionRowBuilder().addComponents(confirmButton, cancelButton);
-
-      const reply = await interaction.editReply({
-        embeds: [confirmEmbed],
-        components: [row],
-      });
-
-      // Button Collector - 30 Sekunden
-      const filter = i => {
-        return ['confirm_' + commandName + '_' + robloxUserName, 'cancel_' + commandName + '_' + robloxUserName].includes(i.customId)
-          && i.user.id === interaction.user.id;
-      };
-
-      const collector = interaction.channel.createMessageComponentCollector({ filter, time: 30_000 });
-
-      collector.on('collect', async i => {
-        if (i.customId.startsWith('cancel_')) {
-          await i.update({ content: '❌ Aktion abgebrochen.', embeds: [], components: [] });
-          collector.stop('abgebrochen');
-          return;
-        }
-        if (i.customId.startsWith('confirm_')) {
-          // Aktion ausführen
-          if (commandName === 'ban') {
-            bannedUsers.set(robloxUserName.toLowerCase(), 'Permanent gebannt');
-            await sendAction(robloxUserId, 'ban');
-          } else if (commandName === 'tempban') {
-            bannedUsers.set(robloxUserName.toLowerCase(), `Temporär gebannt (${duration})`);
-            await sendAction(robloxUserId, 'tempban', duration);
-          } else if (commandName === 'unban') {
-            bannedUsers.delete(robloxUserName.toLowerCase());
-            await sendAction(robloxUserId, 'unban');
-          } else if (commandName === 'kick') {
-            await sendAction(robloxUserId, 'kick');
-          }
-
-          // Erfolgsembed
-          let successTitle = '';
-          let successDesc = '';
-          let successColor = COLOR_LIGHTBLUE;
-          if (commandName === 'ban') {
-            successTitle = '✅ Spieler permanent gebannt';
-            successDesc = `Der Roblox-Spieler **${robloxProfileLink}** wurde permanent gebannt.`;
-            successColor = COLOR_LIGHTBLUE;
-          } else if (commandName === 'tempban') {
-            successTitle = '✅ Spieler temporär gebannt';
-            successDesc = `Der Roblox-Spieler **${robloxProfileLink}** wurde temporär für **${duration}** gebannt.`;
-            successColor = COLOR_LIGHTBLUE;
-          } else if (commandName === 'unban') {
-            successTitle = '✅ Spieler entbannt';
-            successDesc = `Der Roblox-Spieler **${robloxProfileLink}** wurde entbannt.`;
-            successColor = COLOR_LIGHTBLUE;
-          } else if (commandName === 'kick') {
-            successTitle = '✅ Spieler gekickt';
-            successDesc = `Der Roblox-Spieler **${robloxProfileLink}** wurde gekickt.`;
-            successColor = COLOR_RED;
-          }
-
-          const successEmbed = new EmbedBuilder()
-            .setTitle(successTitle)
-            .setDescription(successDesc)
-            .setColor(successColor)
-            .setTimestamp();
-
-          await i.update({ embeds: [successEmbed], components: [] });
-          collector.stop('bestätigt');
-
-          // Loggen
-          if (logChannel) {
-            let logEmbed = new EmbedBuilder()
-              .setTitle(`📜 ${commandName.toUpperCase()} ausgeführt`)
-              .setDescription(`👤 Roblox-Nutzer: **${robloxUserName}**\n🧑‍💻 Von: ${interaction.user.tag}`)
-              .setTimestamp();
-
-            // Farbe je nach Befehl
-            if (commandName === 'kick') {
-              logEmbed.setColor(COLOR_RED);
-            } else if (commandName === 'unban') {
-              logEmbed.setColor(COLOR_GREEN);
-            } else {
-              logEmbed.setColor(COLOR_LIGHTBLUE);
-            }
-
-            await logChannel.send({ embeds: [logEmbed] });
-          }
-        }
-      });
-
-      collector.on('end', (collected, reason) => {
-        if (reason === 'time') {
-          interaction.editReply({ content: '⏰ Zeit zum Bestätigen abgelaufen. Aktion wurde nicht ausgeführt.', embeds: [], components: [] });
-        }
-      });
-
-      return;
+      // Benutzer zurückmelden im Chat
+      return interaction.editReply(`✅ Der Nutzer **${robloxUser}** wurde permanent gebannt.`);
     }
+
+    // Temporärer Ban
+    if (commandName === 'tempban') {
+      const robloxUser = interaction.options.getString('user');
+      const dauer = interaction.options.getString('dauer');
+
+      if (!robloxUser || !dauer) return interaction.editReply('⚠️ Roblox-Benutzername und Dauer sind erforderlich.');
+
+      const usernameLower = robloxUser.toLowerCase();
+      if (bannedUsers.has(usernameLower)) {
+        return interaction.editReply(`❗️ Nutzer **${robloxUser}** ist bereits gebannt.`);
+      }
+
+      // Dauer parsen (z.B. "1d" -> 1 Tag)
+      // Hier könnte man noch genauer parsen, für jetzt einfach als String speichern
+      bannedUsers.set(usernameLower, `Temporär gebannt (${dauer})`);
+
+      const userId = await getRobloxUserId(robloxUser);
+      if (!userId) return interaction.editReply(`❌ Roblox-Nutzer **${robloxUser}** nicht gefunden.`);
+
+      await sendAction(userId, 'tempban', dauer);
+
+      const embed = new EmbedBuilder()
+        .setTitle('⏳ Nutzer temporär gebannt')
+        .setDescription(`👤 Roblox-Nutzer: **${robloxUser}** wurde temporär für **${dauer}** gebannt.`)
+        .setColor(COLOR_ORANGE)
+        .setTimestamp();
+
+      if (logChannel) await logChannel.send({ embeds: [embed] });
+
+      return interaction.editReply(`✅ Der Nutzer **${robloxUser}** wurde temporär für ${dauer} gebannt.`);
+    }
+
+    // Unban
+    if (commandName === 'unban') {
+      const robloxUser = interaction.options.getString('user');
+      if (!robloxUser) return interaction.editReply('⚠️ Kein Roblox-Benutzername angegeben.');
+
+      const usernameLower = robloxUser.toLowerCase();
+      if (!bannedUsers.has(usernameLower)) {
+        return interaction.editReply(`❗️ Nutzer **${robloxUser}** ist nicht gebannt.`);
+      }
+
+      bannedUsers.delete(usernameLower);
+
+      const userId = await getRobloxUserId(robloxUser);
+      if (userId) {
+        await sendAction(userId, 'unban');
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🔓 Nutzer entbannt')
+        .setDescription(`👤 Roblox-Nutzer: **${robloxUser}** wurde entbannt.`)
+        .setColor(COLOR_GREEN)
+        .setTimestamp();
+
+      if (logChannel) await logChannel.send({ embeds: [embed] });
+
+      return interaction.editReply(`✅ Der Nutzer **${robloxUser}** wurde entbannt.`);
+    }
+
+    // Kick
+    if (commandName === 'kick') {
+      const robloxUser = interaction.options.getString('user');
+      if (!robloxUser) return interaction.editReply('⚠️ Kein Roblox-Benutzername angegeben.');
+
+      const userId = await getRobloxUserId(robloxUser);
+      if (!userId) return interaction.editReply(`❌ Roblox-Nutzer **${robloxUser}** nicht gefunden.`);
+
+      await sendAction(userId, 'kick');
+
+      const embed = new EmbedBuilder()
+        .setTitle('👢 Nutzer gekickt')
+        .setDescription(`👤 Roblox-Nutzer: **${robloxUser}** wurde gekickt.`)
+        .setColor(COLOR_YELLOW)
+        .setTimestamp();
+
+      if (logChannel) await logChannel.send({ embeds: [embed] });
+
+      return interaction.editReply(`✅ Der Nutzer **${robloxUser}** wurde gekickt.`);
+    }
+
   } catch (error) {
-    console.error(error);
-    interaction.editReply('❌ Ein Fehler ist aufgetreten.');
+    console.error('Fehler bei Command:', error);
+    return interaction.editReply('❌ Ein Fehler ist aufgetreten. Bitte versuche es später erneut.');
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
- 
-// Express-Webserver zum Offenhalten des Bots (optional)
+// Express HTTP Server (zum Beispiel für Keep-Alive)
 const app = express();
-app.get('/', (req, res) => res.send('Bot läuft...'));
-app.listen(process.env.PORT || 3000, () => console.log('🌐 Webserver läuft'));
+app.get('/', (req, res) => res.send('Bot läuft!'));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🌐 Express Server läuft auf Port ${PORT}`);
+});
+
+client.login(process.env.DISCORD_TOKEN);
+
 
 
 // ID für den Update-Channel

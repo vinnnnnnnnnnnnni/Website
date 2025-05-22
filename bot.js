@@ -2,6 +2,8 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const axios = require('axios');
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 
 const client = new Client({
   intents: [
@@ -14,7 +16,43 @@ const client = new Client({
 const LOG_CHANNEL_ID = '1373777502073389219';
 const GUILD_ID = '1361770059575591143';
 const OWNER_IDS = ['1079510826651758713', '1098314958900568094'];
-let allowedUsers = new Set(OWNER_IDS); // Owner automatisch in Whitelist
+
+// Datei-Pfad für Whitelist speichern
+const whitelistPath = path.join(__dirname, 'whitelist.json');
+
+// Whitelist laden
+function loadWhitelist() {
+  try {
+    if (!fs.existsSync(whitelistPath)) {
+      fs.writeFileSync(whitelistPath, JSON.stringify([]));
+      return new Set();
+    }
+    const data = fs.readFileSync(whitelistPath, 'utf-8');
+    const arr = JSON.parse(data);
+    return new Set(arr);
+  } catch (error) {
+    console.error('Fehler beim Laden der Whitelist:', error);
+    return new Set();
+  }
+}
+
+// Whitelist speichern
+function saveWhitelist(set) {
+  try {
+    const arr = Array.from(set);
+    fs.writeFileSync(whitelistPath, JSON.stringify(arr, null, 2));
+  } catch (error) {
+    console.error('Fehler beim Speichern der Whitelist:', error);
+  }
+}
+
+let allowedUsers = loadWhitelist();
+
+// Owner automatisch in Whitelist (falls noch nicht drin)
+for (const ownerId of OWNER_IDS) {
+  allowedUsers.add(ownerId);
+}
+saveWhitelist(allowedUsers); // Sicherstellen, dass Owner in Datei stehen
 
 // Beispielhafte Datenstruktur für gebannte Roblox-User
 const bannedUsers = new Map([
@@ -145,6 +183,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       allowedUsers.add(targetUser.id);
+      saveWhitelist(allowedUsers);
 
       const embed = new EmbedBuilder()
         .setTitle('➕ Zur Whitelist hinzugefügt')
@@ -169,6 +208,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       allowedUsers.delete(targetUser.id);
+      saveWhitelist(allowedUsers);
 
       const embed = new EmbedBuilder()
         .setTitle('➖ Von Whitelist entfernt')
@@ -267,7 +307,7 @@ client.on('interactionCreate', async interaction => {
       const robloxProfile = robloxUserId ? `https://www.roblox.com/users/${robloxUserId}/profile` : 'Nicht gefunden';
       const avatarUrl = robloxUserId ? await getRobloxAvatarUrl(robloxUserId) : null;
 
-      await sendAction(username, commandName, duration);
+      await sendAction(robloxUserId, commandName, duration); // Hier die ID schicken!
 
       const successEmbed = new EmbedBuilder()
         .setTitle(`✅ ${commandName.toUpperCase()} ausgeführt`)
